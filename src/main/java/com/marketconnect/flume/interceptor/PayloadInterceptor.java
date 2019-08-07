@@ -5,10 +5,12 @@ import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.interceptor.Interceptor;
 
+import org.codehaus.janino.ExpressionEvaluator;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Iterator;
 import java.util.Map;
-import java.util.StringTokenizer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,10 +22,12 @@ public class PayloadInterceptor implements Interceptor {
             LoggerFactory.getLogger(PayloadInterceptor.class);
 
     private String payload;
+    private String output;
 
-    public PayloadInterceptor(String payload) {
+    public PayloadInterceptor(String payload, String output) {
         this.payload = payload;
-        logger.debug("Payload is " + payload);
+        this.output = output;
+        logger.debug("Payload is " + payload + " with dest " + output);
     }
 
     @Override
@@ -35,22 +39,36 @@ public class PayloadInterceptor implements Interceptor {
         try {
 
             Map<String, String> headers = event.getHeaders();
-            StringTokenizer stringTokenizer = new StringTokenizer(payload, " + ");
-            StringBuffer body = new StringBuffer("");
-            while (stringTokenizer.hasMoreElements()) {
-                String token = stringTokenizer.nextToken();
-                if ((token.startsWith("\"")) && (token.endsWith("\""))) {
-                    body.append(token.substring(1, token.length() - 1));
-                } else if ((token.startsWith("[")) && (token.endsWith("]"))) {
-                    String value = headers.get(token.substring(1, token.length() - 1));
-                    if (value != null) {
-                        body.append(value);
-                    }
-                }
+            final Iterator<String> headerIterator = headers.keySet().iterator();
+            List<String> parameterNames = new ArrayList<String>();
+            List<Class<?>> parameterTypes = new ArrayList<Class<?>>();
+            List<String> argumentData = new ArrayList<String>();
+            while (headerIterator.hasNext()) {
+                final String currentHeader = headerIterator.next();
+                parameterNames.add( currentHeader );
+                parameterTypes.add( String.class );
+                argumentData.add(headers.get(currentHeader));
             }
+
+            ExpressionEvaluator ee = new ExpressionEvaluator();
+            ee.setParameters(parameterNames.toArray( new String[parameterNames.size()] ), parameterTypes.toArray( new Class<?>[parameterTypes.size()] ) );
+            ee.setReturnType( Object.class );
+            ee.setThrownExceptions( new Class<?>[] { Exception.class } );
+            ee.cook(payload);
+            Object result = ee.evaluate( argumentData.toArray( new String[argumentData.size()] ) );
+            String body = null;
+            if (result != null) {
+                body = (String) result;
+            }
+            logger.debug("Result is " + body);
+
             if (body.length() > 0) {
-                event.setBody(body.toString().getBytes());
-            } else {
+                if (Constants.DEFAULT_OUTPUT.equalsIgnoreCase(output)) {
+                    event.setBody(body.getBytes());
+                } else {
+                    headers.put(output, body);
+                }
+            } else if (Constants.DEFAULT_OUTPUT.equalsIgnoreCase(output)) {
                 event.setBody("".getBytes());
             }
 
@@ -82,15 +100,17 @@ public class PayloadInterceptor implements Interceptor {
     public static class Builder implements Interceptor.Builder {
 
         private String payload;
+        private String output;
 
         @Override
         public void configure(Context context) {
-            payload = context.getString(CONFIG_PAYLOAD);
+            payload = context.getString(Constants.CONFIG_PAYLOAD);
+            output = context.getString(Constants.CONFIG_OUTPUT, Constants.DEFAULT_OUTPUT);
         }
 
         @Override
         public PayloadInterceptor build() {
-            return new PayloadInterceptor(payload);
+            return new PayloadInterceptor(payload, output);
         }
 
     }
@@ -99,5 +119,7 @@ public class PayloadInterceptor implements Interceptor {
     public static class Constants {
 
         public static final String CONFIG_PAYLOAD = "payload";
+        public static final String CONFIG_OUTPUT = "output";
+        public static final String DEFAULT_OUTPUT = "event_body";
     }
 }
