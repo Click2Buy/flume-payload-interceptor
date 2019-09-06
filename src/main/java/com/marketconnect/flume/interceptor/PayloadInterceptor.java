@@ -75,8 +75,7 @@ public class PayloadInterceptor implements Interceptor {
         } catch (java.lang.ClassCastException e) {
             logger.warn("Skipping event due to: ClassCastException.", e);
         } catch (Exception e) {
-            logger.warn("Skipping event due to: unknown error.", e);
-            e.printStackTrace();
+            logger.warn("Skipping event due to: unknown error. " + event.toString(), e);
         }
         return event;
     }
