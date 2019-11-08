@@ -1,11 +1,15 @@
 package com.marketconnect.flume.interceptor;
 
+import com.google.common.base.Charsets;
+
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.interceptor.Interceptor;
 
 import org.codehaus.janino.ExpressionEvaluator;
+
+import java.lang.reflect.InvocationTargetException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,10 +25,16 @@ public class PayloadInterceptor implements Interceptor {
     private static final Logger logger =
             LoggerFactory.getLogger(PayloadInterceptor.class);
 
+    private String[] variables;
     private String payload;
     private String output;
+    private ExpressionEvaluator ee;
 
-    public PayloadInterceptor(String payload, String output) {
+    public PayloadInterceptor(String variables, String payload, String output) {
+        if (variables != null && variables.length() > 0)
+            this.variables = variables.split(",");
+        else
+            this.variables = new String[0];
         this.payload = payload;
         this.output = output;
         logger.debug("Payload is " + payload + " with dest " + output);
@@ -32,6 +42,23 @@ public class PayloadInterceptor implements Interceptor {
 
     @Override
     public void initialize() {
+            List<String> parameterNames = new ArrayList<String>();
+            List<Class<?>> parameterTypes = new ArrayList<Class<?>>();
+            parameterNames.add( Constants.EVENT_BODY );
+            parameterTypes.add( String.class );
+            for (int i = 0; i < variables.length; i++) {
+                parameterNames.add( variables[i] );
+                parameterTypes.add( String.class );
+            }
+            ee = new ExpressionEvaluator();
+            ee.setParameters(parameterNames.toArray( new String[parameterNames.size()] ), parameterTypes.toArray( new Class<?>[parameterTypes.size()] ) );
+            ee.setReturnType( Object.class );
+            ee.setThrownExceptions( new Class<?>[] { Exception.class } );
+        try {
+            ee.cook(payload);
+        } catch (Exception e) {
+            logger.warn("Initializing failed: unknown error. ", e);
+        }
     }
 
     @Override
@@ -40,35 +67,30 @@ public class PayloadInterceptor implements Interceptor {
 
             Map<String, String> headers = event.getHeaders();
             final Iterator<String> headerIterator = headers.keySet().iterator();
-            List<String> parameterNames = new ArrayList<String>();
-            List<Class<?>> parameterTypes = new ArrayList<Class<?>>();
             List<String> argumentData = new ArrayList<String>();
-            while (headerIterator.hasNext()) {
-                final String currentHeader = headerIterator.next();
-                parameterNames.add( currentHeader );
-                parameterTypes.add( String.class );
-                argumentData.add(headers.get(currentHeader));
+            argumentData.add(new String(event.getBody(), Charsets.UTF_8));
+            for (int i = 0; i < variables.length; i++) {
+                argumentData.add(headers.get(variables[i]));
             }
 
-            ExpressionEvaluator ee = new ExpressionEvaluator();
-            ee.setParameters(parameterNames.toArray( new String[parameterNames.size()] ), parameterTypes.toArray( new Class<?>[parameterTypes.size()] ) );
-            ee.setReturnType( Object.class );
-            ee.setThrownExceptions( new Class<?>[] { Exception.class } );
-            ee.cook(payload);
-            Object result = ee.evaluate( argumentData.toArray( new String[argumentData.size()] ) );
             String body = null;
-            if (result != null) {
-                body = (String) result;
+            try {
+                Object result = ee.evaluate( argumentData.toArray( new String[argumentData.size()] ) );
+                if (result != null) {
+                    body = (String) result;
+                }
+            } catch (InvocationTargetException e) {
+                logger.error(e + " event " + argumentData.toString() + " payload " + payload);
             }
             logger.debug("Result is " + body);
 
-            if (body.length() > 0) {
-                if (Constants.DEFAULT_OUTPUT.equalsIgnoreCase(output)) {
+            if (body != null && body.length() > 0) {
+                if (Constants.EVENT_BODY.equalsIgnoreCase(output)) {
                     event.setBody(body.getBytes());
                 } else {
                     headers.put(output, body);
                 }
-            } else if (Constants.DEFAULT_OUTPUT.equalsIgnoreCase(output)) {
+            } else if (Constants.EVENT_BODY.equalsIgnoreCase(output)) {
                 event.setBody("".getBytes());
             }
 
@@ -98,18 +120,20 @@ public class PayloadInterceptor implements Interceptor {
 
     public static class Builder implements Interceptor.Builder {
 
+        private String variables;
         private String payload;
         private String output;
 
         @Override
         public void configure(Context context) {
+            variables = context.getString(Constants.CONFIG_VARIABLES);
             payload = context.getString(Constants.CONFIG_PAYLOAD);
-            output = context.getString(Constants.CONFIG_OUTPUT, Constants.DEFAULT_OUTPUT);
+            output = context.getString(Constants.CONFIG_OUTPUT, Constants.EVENT_BODY);
         }
 
         @Override
         public PayloadInterceptor build() {
-            return new PayloadInterceptor(payload, output);
+            return new PayloadInterceptor(variables, payload, output);
         }
 
     }
@@ -117,8 +141,9 @@ public class PayloadInterceptor implements Interceptor {
 
     public static class Constants {
 
+        public static final String CONFIG_VARIABLES = "variables";
         public static final String CONFIG_PAYLOAD = "payload";
         public static final String CONFIG_OUTPUT = "output";
-        public static final String DEFAULT_OUTPUT = "event_body";
+        public static final String EVENT_BODY = "event_body";
     }
 }
