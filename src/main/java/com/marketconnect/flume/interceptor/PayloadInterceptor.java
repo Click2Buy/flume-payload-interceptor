@@ -66,7 +66,6 @@ public class PayloadInterceptor implements Interceptor {
         try {
 
             Map<String, String> headers = event.getHeaders();
-            final Iterator<String> headerIterator = headers.keySet().iterator();
             List<String> argumentData = new ArrayList<String>();
             argumentData.add(new String(event.getBody(), Charsets.UTF_8));
             for (int i = 0; i < variables.length; i++) {
@@ -86,12 +85,12 @@ public class PayloadInterceptor implements Interceptor {
 
             if (body != null && body.length() > 0) {
                 if (Constants.EVENT_BODY.equalsIgnoreCase(output)) {
-                    event.setBody(body.getBytes());
+                    event.setBody(body.getBytes(Charsets.UTF_8));
                 } else {
                     headers.put(output, body);
                 }
             } else if (Constants.EVENT_BODY.equalsIgnoreCase(output)) {
-                event.setBody("".getBytes());
+                event.setBody("".getBytes(Charsets.UTF_8));
             }
 
         } catch (java.lang.ClassCastException e) {
